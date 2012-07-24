@@ -14,9 +14,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
 NW_ID_EXTERNAL = '__NW_ID_EXTERNAL__'
+NW_ID_VPORT_GRE = '__NW_ID_VPORT_GRE__'
 NW_ID_UNKNOWN = '__NW_ID_UNKNOWN__'
+
+RESERVED_NETWORK_IDS = (
+    NW_ID_EXTERNAL,
+    NW_ID_VPORT_GRE,
+    NW_ID_UNKNOWN,
+)
 
 # PORT_TYPE_VM = 'guestvm'
 # PORT_TYPE_GW = 'gateway'

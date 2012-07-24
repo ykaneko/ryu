@@ -41,7 +41,7 @@ class SimpleIsolation(app_manager.RyuApp):
     _CONTEXTS = {
         'network': network.Network,
         'dpset': dpset.DPSet,
-        }
+    }
 
     def __init__(self, *args, **kwargs):
         super(SimpleIsolation, self).__init__(*args, **kwargs)
@@ -170,7 +170,8 @@ class SimpleIsolation(app_manager.RyuApp):
             # new port.
             rule = nx_match.ClsRule()
             rule.set_dl_dst(src)
-            datapath.send_flow_mod(rule=rule, cookie=0,
+            datapath.send_flow_mod(
+                rule=rule, cookie=0,
                 command=datapath.ofproto.OFPFC_DELETE, idle_timeout=0,
                 hard_timeout=0, priority=datapath.ofproto.OFP_DEFAULT_PRIORITY,
                 out_port=old_port)

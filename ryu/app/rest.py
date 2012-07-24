@@ -17,11 +17,14 @@
 import json
 from webob import Request, Response
 
+from ryu.app.wsgi import ControllerBase, WSGIApplication
 from ryu.base import app_manager
 from ryu.controller import network
 from ryu.exception import NetworkNotFound, NetworkAlreadyExist
 from ryu.exception import PortNotFound, PortAlreadyExist
-from ryu.app.wsgi import ControllerBase, WSGIApplication
+from ryu.exception import MacAddressAlreadyExist
+from ryu.lib import mac as mac_lib
+
 
 ## TODO:XXX
 ## define db interface and store those information into db
@@ -134,11 +137,46 @@ class PortController(ControllerBase):
         return Response(status=200)
 
 
+class MacController(ControllerBase):
+    def __init__(self, req, link, data, **config):
+        super(MacController, self).__init__(req, link, data, **config)
+        self.nw = data
+
+    def create(self, req, network_id, dpid, port_id, mac_addr, **_kwargs):
+        mac = mac_lib.haddr_to_bin(mac_addr)
+        try:
+            self.nw.create_mac(network_id, int(dpid, 16), int(port_id), mac)
+        except PortNotFound:
+            return Response(status=404)
+        except MacAddressAlreadyExist:
+            return Response(status=409)
+
+        return Response(status=200)
+
+    def update(self, req, network_id, dpid, port_id, mac_addr, **_kwargs):
+        mac = mac_lib.haddr_to_bin(mac_addr)
+        try:
+            self.nw.update_mac(network_id, int(dpid, 16), int(port_id), mac)
+        except PortNotFound:
+            return Response(status=404)
+
+        return Response(status=200)
+
+    def lists(self, req, network_id, dpid, port_id, **_kwargs):
+        try:
+            body = json.dumps([mac_lib.haddr_to_str(mac_addr) for mac_addr in
+                               self.nw.list_mac(dpid, port_no)])
+        except PortNotFound:
+            return Response(status=404)
+
+        return Response(content_type='application/json', body=body)
+
+
 class restapi(app_manager.RyuApp):
     _CONTEXTS = {
         'network': network.Network,
         'wsgi': WSGIApplication
-        }
+    }
 
     def __init__(self, *args, **kwargs):
         super(restapi, self).__init__(*args, **kwargs)
@@ -181,3 +219,18 @@ class restapi(app_manager.RyuApp):
         mapper.connect('ports', uri,
                        controller=PortController, action='delete',
                        conditions=dict(method=['DELETE']))
+
+        wsgi.registory['MacController'] = self.nw
+        uri += '/macs'
+        mapper.connect('macs', uri,
+                       controller=MacController, action='lists',
+                       conditions=dict(method=['GET']))
+
+        uri += '/{mac_addr}'
+        mapper.connect('macs', uri,
+                       controller=MacController, action='create',
+                       conditions=dict(method=['POST']))
+
+        mapper.connect('macs', uri,
+                       controller=MacController, action='update',
+                       conditions=dict(method=['PUT']))
