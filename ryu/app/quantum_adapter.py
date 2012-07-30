@@ -77,11 +77,11 @@ PORT_GUEST = 2
 PORT_TUNNEL = 3
 
 
-class Port(object):
+class OVSPort(object):
     # extra-ids: 'attached-mac', 'iface-id', 'iface-status', 'vm-uuid'
 
     def __init__(self, row, port):
-        super(Port, self).__init__()
+        super(OVSPort, self).__init__()
         self.row = row
         self.link_state = None
         self.name = None
@@ -98,15 +98,15 @@ class Port(object):
             self.ext_ids = dict((name, val)
                                 for (name, val) in port['external_ids'][1])
 
-    def get_porttype(self):
+    def get_port_type(self):
         if not isinstance(self.ofport, int):
             return PORT_UNKNOWN
         if self.type == 'internal' and 'iface-id' in self.ext_ids:
             return PORT_GATEWAY
         if self.type == 'gre' and 'iface-id' in self.ext_ids:
-            return PORT_GUEST
-        if self.type == '' and 'vm-uuid' in self.ext_ids:
             return PORT_TUNNEL
+        if self.type == '' and 'vm-uuid' in self.ext_ids:
+            return PORT_GUEST
         return PORT_UNKNOWN
 
     def __str__(self):
@@ -173,25 +173,24 @@ class OVSMonitor(object):
             new_port = None
             old_port = None
             if "new" in table:
-                new_port = Port(row, table['new'])
+                new_port = OVSPort(row, table['new'])
             if "old" in table:
-                old_port = Port(row, table['old'])
+                old_port = OVSPort(row, table['old'])
 
             if old_port == new_port:
                 continue
-
             if not new_port:
-                if old_port.get_porttype() != PORT_UNKNOWN:
+                if old_port.get_port_type() != PORT_UNKNOWN:
                     LOG.info("delete port: %s", old_port)
                 continue
-
             if not old_port:
-                if new_port.get_porttype() != PORT_UNKNOWN:
+                if new_port.get_port_type() != PORT_UNKNOWN:
                     LOG.info("create port: %s", new_port)
-                    self.notify_quantum(new_port)
+                    if new_port.get_port_type() != PORT_TUNNEL:
+                        self.notify_quantum(new_port)
                 continue
-
-            if new_port.get_porttype() != PORT_UNKNOWN:
+            if (new_port.get_port_type() == PORT_GUEST or
+                    new_port.get_port_type() == PORT_GATEWAY):
                 LOG.info("update port: %s", new_port)
                 self.notify_quantum(new_port)
 
