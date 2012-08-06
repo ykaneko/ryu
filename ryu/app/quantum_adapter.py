@@ -21,6 +21,7 @@ from gevent.server import StreamServer
 from gevent import monkey
 monkey.patch_all()
 
+from sqlalchemy import or_
 from sqlalchemy.exc import OperationalError, NoSuchTableError
 from sqlalchemy.orm import exc
 from sqlalchemy.orm import sessionmaker
@@ -32,6 +33,8 @@ from ovs.jsonrpc import Message
 
 from quantumclient.v2_0 import client as q_client
 
+from ryu.app import client as ryu_client
+from ryu.app import rest_nw_id
 from ryu.base import app_manager
 
 
@@ -88,6 +91,7 @@ class OVSPort(object):
         self.ofport = None
         self.type = None
         self.ext_ids = {}
+        self.options = {}
         self.update(port)
 
     def update(self, port):
@@ -97,22 +101,26 @@ class OVSPort(object):
         if 'external_ids' in port:
             self.ext_ids = dict((name, val)
                                 for (name, val) in port['external_ids'][1])
+        if 'options' in port:
+            self.options = dict((name, val)
+                                for (name, val) in port['options'][1])
 
     def get_port_type(self):
         if not isinstance(self.ofport, int):
             return PORT_UNKNOWN
         if self.type == 'internal' and 'iface-id' in self.ext_ids:
             return PORT_GATEWAY
-        if self.type == 'gre' and 'iface-id' in self.ext_ids:
+        if (self.type == 'gre' and 'local_ip' in self.options and
+                'remote_ip' in self.options):
             return PORT_TUNNEL
         if self.type == '' and 'vm-uuid' in self.ext_ids:
             return PORT_GUEST
         return PORT_UNKNOWN
 
     def __str__(self):
-        return "row=%s name=%s type=%s ofport=%s state=%s ext_ids=%s" % (
-            self.row, self.name, self.type, self.ofport, self.link_state,
-            self.ext_ids)
+        return "name=%s type=%s ofport=%s state=%s ext_ids=%s options=%s" % (
+            self.name, self.type, self.ofport, self.link_state,
+            self.ext_ids, self.options)
 
 
 S_DPID_GET = 0      # start datapath-id monitoring
@@ -121,13 +129,16 @@ S_MONITOR = 2      # datapath-id/port monitoring
 
 
 class OVSMonitor(object):
-
-    def __init__(self, sock, addr, client, db):
+    def __init__(self, sock, addr, db, q_client, ryu_rest_client,
+                 gre_tunnel_client):
         super(OVSMonitor, self).__init__()
         self.socket = sock
         self.address = addr
-        self.client = client
+        self.tunnel_ip, port_ = addr
         self.db = db
+        self.q_client = q_client
+        self.api = ryu_rest_client
+        self.tunnel_api = gre_tunnel_client
 
         self.state = None
         self.parser = None
@@ -149,9 +160,11 @@ class OVSMonitor(object):
                 self.db.ports.id == port.ext_ids['iface-id']).one()
         except exc.NoResultFound:
             LOG.warn("port not found: %s", port.ext_ids['iface-id'])
+            self.db.commit()
             return
         except (NoSuchTableError, OperationalError):
             LOG.warn("could not access database")
+            self.db.rollback()
             return
 
         port_data = {
@@ -162,10 +175,27 @@ class OVSMonitor(object):
         body = {'port': port_data}
         LOG.debug("port-body = %s", body)
         try:
-            self.client.update_port(port_info.id, body)
+            self.q_client.update_port(port_info.id, body)
         except Exception as e:
             LOG.debug("quantum_client.update_port failed: %s", e)
             pass
+        self.db.commit()
+
+    def update_gre_port(self, port):
+        LOG.debug("update_gre_port: %s", port)
+        try:
+            node = self.db.ovs_node.filter(
+                self.db.ovs_node.address == port.options['remote_ip']).one()
+        except exc.NoResultFound:
+            LOG.debug("gre port not found: %s", port)
+            #self._del_port(port.name, port.ofport)
+            pass
+        else:
+            LOG.debug("update gre port: %s", port)
+            self.api.update_port(rest_nw_id.NW_ID_VPORT_GRE,
+                                 self.dpid, port.ofport)
+            self.tunnel_api.update_remote_dpid(self.dpid, port.ofport,
+                                               node.dpid)
 
     def update_port(self, data):
         for row in data:
@@ -188,13 +218,37 @@ class OVSMonitor(object):
                     LOG.info("create port: %s", new_port)
                     if new_port.get_port_type() != PORT_TUNNEL:
                         self.notify_quantum(new_port)
+                    else:
+                        self.update_gre_port(new_port)
                 continue
             if (new_port.get_port_type() == PORT_GUEST or
                     new_port.get_port_type() == PORT_GATEWAY):
                 LOG.info("update port: %s", new_port)
                 self.notify_quantum(new_port)
 
+    def update_ovs_node(self):
+        dpid_or_ip = or_(self.db.ovs_node.dpid == self.dpid,
+                         self.db.ovs_node.address == self.tunnel_ip)
+        try:
+            nodes = self.db.ovs_node.filter(dpid_or_ip).all()
+        except exc.NoResultFound:
+            pass
+        else:
+            for node in nodes:
+                LOG.debug("node %s", node)
+                if node.dpid == self.dpid and node.address == self.tunnel_ip:
+                    pass
+                elif node.dpid == self.dpid:
+                    LOG.warn("updating node %s %s -> %s",
+                             node.dpid, node.address, self.tunnel_ip)
+                else:
+                    LOG.warn("deleting node %s", node)
+                self.db.delete(node)
+        self.db.ovs_node.insert(dpid=self.dpid, address=self.tunnel_ip)
+        self.db.commit()
+
     def update_dpid(self, data):
+        old_dpid = self.dpid
         for row in data:
             table = data[row]
             if "new" in table:
@@ -232,7 +286,7 @@ class OVSMonitor(object):
             '["Open_vSwitch", "port_monitor", \
                 {"Interface": [{"columns": \
                     ["name", "ofport", "type", "link_state",\
-                    "external_ids"]}]}]')
+                    "external_ids", "options"]}]}]')
         self.send_request("monitor", params)
 
     def receive_dpid(self, msg):
@@ -240,6 +294,7 @@ class OVSMonitor(object):
             return
         data = msg.result['Bridge']
         self.update_dpid(data)
+        self.update_ovs_node()
         self.start_port_monitor()
 
     def start_dpid_monitor(self):
@@ -336,9 +391,37 @@ class OVSMonitor(object):
 
     def serve(self):
         LOG.info("connect: %s", self.address)
+        self.api.update_network(rest_nw_id.NW_ID_VPORT_GRE)
         self.start_dpid_monitor()
         self.recv_loop()
         self.close()
+
+
+def check_ofp_mode(db):
+    LOG.debug("checking db")
+
+    servers = db.ofp_server.all()
+
+    ofp_contoroller_addr = None
+    ofp_rest_api_addr = None
+    for serv in servers:
+        if serv.host_type == "REST_API":
+            ofp_rest_api_addr = serv.address
+        elif serv.host_type == "controller":
+            ofp_controller_addr = serv.address
+        else:
+            LOG.warn("ignoring unknown server type %s", serv)
+
+    LOG.debug("controller %s", ofp_controller_addr)
+    LOG.debug("api %s", ofp_rest_api_addr)
+    if not ofp_controller_addr:
+        raise RuntimeError("OF controller isn't specified")
+    if not ofp_rest_api_addr:
+        raise RuntimeError("Ryu rest API port isn't specified")
+
+    LOG.debug("going to ofp controller mode %s %s",
+              ofp_controller_addr, ofp_rest_api_addr)
+    return (ofp_controller_addr, ofp_rest_api_addr)
 
 
 class QuantumAdapter(app_manager.RyuApp):
@@ -350,13 +433,16 @@ class QuantumAdapter(app_manager.RyuApp):
 
     @staticmethod
     def connection(sock, addr):
-        client = _get_quantum_client()
+        q_client = _get_quantum_client()
         db = SqlSoup(FLAGS.sql_connection,
                      session=scoped_session(
                          sessionmaker(autoflush=True,
                                       expire_on_commit=False,
                                       autocommit=True)))
-        mon = OVSMonitor(sock, addr, client, db)
+        ofp_ctrl_addr_, ofp_rest_api_addr = check_ofp_mode(db)
+        ryu_rest_client = ryu_client.OFPClient(ofp_rest_api_addr)
+        gt_client = ryu_client.GRETunnelClient(ofp_rest_api_addr)
+        mon = OVSMonitor(sock, addr, db, q_client, ryu_rest_client, gt_client)
         mon.serve()
 
 
