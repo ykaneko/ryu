@@ -17,8 +17,8 @@ import sys
 import gflags
 import logging
 
-from gevent.server import StreamServer
 from gevent import monkey
+import gevent
 monkey.patch_all()
 
 from sqlalchemy import or_
@@ -51,7 +51,8 @@ gflags.DEFINE_string(
     'mysql://root:mysql@192.168.122.10/ovs_quantum?charset=utf8',
     'database connection')
 gflags.DEFINE_string('int_bridge', 'br-int', 'integration bridge name')
-gflags.DEFINE_string('quantum_url', 'http://192.168.122.10:9696',
+
+gflags.DEFINE_string('quantum_url', 'http://localhost:9696',
                      'URL for connecting to quantum')
 gflags.DEFINE_integer('quantum_url_timeout', 30,
                       'timeout value for connecting to quantum in seconds')
@@ -154,11 +155,11 @@ S_MONITOR = 2      # datapath-id/port monitoring
 
 class OVSMonitor(object):
     def __init__(self, sock, addr, db, q_client, ryu_rest_client,
-                 gre_tunnel_client):
+                 gre_tunnel_client, tunnel_ip):
         super(OVSMonitor, self).__init__()
         self.socket = sock
         self.address = addr
-        self.tunnel_ip, port_ = addr
+        self.tunnel_ip = tunnel_ip
         self.db = db
         self.q_client = q_client
         self.api = ryu_rest_client
@@ -448,32 +449,45 @@ def check_ofp_mode(db):
     return (ofp_controller_addr, ofp_rest_api_addr)
 
 
+def create_monitor(address, tunnel_ip):
+    proto, host, port = address.split(':')
+    if proto not in ['tcp', 'ssl']:
+        LOG.error("unknown protocol: %s", address)
+        raise Exception()
+    sock = gevent.socket.socket()
+    if proto == 'ssl':
+        sock = gevent.ssl.wrap_socket(sock)
+    try:
+        sock.connect((host, int(port)))
+    except gevent.socket.error as exc:
+        LOG.error("TCP connection failure: %s", exc)
+        return
+    except gevent.ssl.SSLError as exc:
+        LOG.error("SSL connection failure: %s", exc)
+        return
+
+    db = SqlSoup(FLAGS.sql_connection,
+                 session=scoped_session(sessionmaker(autoflush=True,
+                                                     expire_on_commit=False,
+                                                     autocommit=False)))
+    token = None
+    if FLAGS.quantum_auth_strategy:
+        token = _get_auth_token()
+    q_client = _get_quantum_client(token)
+
+    ofp_ctrl_addr_, ofp_rest_api_addr = check_ofp_mode(db)
+    ryu_rest_client = ryu_client.OFPClient(ofp_rest_api_addr)
+    gt_client = ryu_client.GRETunnelClient(ofp_rest_api_addr)
+
+    mon = OVSMonitor(sock, address, db, q_client, ryu_rest_client, gt_client,
+                     tunnel_ip)
+    mon.serve()
+
+
 class QuantumAdapter(app_manager.RyuApp):
     def __init__(self, *_args, **kwargs):
         super(QuantumAdapter, self).__init__()
-        server = StreamServer((FLAGS.rpc_listen_host, FLAGS.rpc_listen_port),
-                              QuantumAdapter.connection)
-        server.serve_forever()
-
-    @staticmethod
-    def connection(sock, addr):
-        token = None
-        if FLAGS.quantum_auth_strategy:
-            token = _get_auth_token()
-        q_client = _get_quantum_client(token)
-
-        db = SqlSoup(FLAGS.sql_connection,
-                     session=scoped_session(
-                         sessionmaker(autoflush=True,
-                                      expire_on_commit=False,
-                                      autocommit=True)))
-
-        ofp_ctrl_addr_, ofp_rest_api_addr = check_ofp_mode(db)
-        ryu_rest_client = ryu_client.OFPClient(ofp_rest_api_addr)
-        gt_client = ryu_client.GRETunnelClient(ofp_rest_api_addr)
-
-        mon = OVSMonitor(sock, addr, db, q_client, ryu_rest_client, gt_client)
-        mon.serve()
+        create_monitor('tcp:192.168.122.10:6632', '192.168.122.10')
 
 
 def main():
