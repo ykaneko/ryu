@@ -16,6 +16,7 @@
 import sys
 import gflags
 import logging
+import uuid
 
 from gevent import monkey
 import gevent
@@ -42,10 +43,6 @@ from ryu.base import app_manager
 LOG = logging.getLogger('quantum_adapter')
 
 FLAGS = gflags.FLAGS
-gflags.DEFINE_string('rpc_listen_host', '127.0.0.1',
-                     'quantum adapter listen host')
-gflags.DEFINE_integer('rpc_listen_port', 6634,
-                      'quantum adapter listen port')
 gflags.DEFINE_string(
     'sql_connection',
     'mysql://root:mysql@192.168.122.10/ovs_quantum?charset=utf8',
@@ -149,29 +146,34 @@ class OVSPort(object):
 
 
 S_DPID_GET = 0      # start datapath-id monitoring
-S_PORT_GET = 1      # start port monitoring
-S_MONITOR = 2      # datapath-id/port monitoring
+S_CTRL_SET = 1      # start set controller
+S_PORT_GET = 2      # start port monitoring
+S_MONITOR = 3       # datapath-id/port monitoring
 
 
 class OVSMonitor(object):
     def __init__(self, sock, addr, db, q_client, ryu_rest_client,
-                 gre_tunnel_client, tunnel_ip):
+                 gre_tunnel_client, ctrl_addr, tunnel_ip):
         super(OVSMonitor, self).__init__()
         self.socket = sock
         self.address = addr
-        self.tunnel_ip = tunnel_ip
         self.db = db
         self.q_client = q_client
         self.api = ryu_rest_client
         self.tunnel_api = gre_tunnel_client
+        self.ctrl_addr = ctrl_addr
+        self.tunnel_ip = tunnel_ip
 
         self.state = None
         self.parser = None
         self.dpid = None
+        self.dpid_row = None
         self.is_active = True
 
         self.handlers = {}
         self.handlers[S_DPID_GET] = {Message.T_REPLY: self.receive_dpid}
+        self.handlers[S_CTRL_SET] = {Message.T_REPLY:
+                                     self.receive_set_controller}
         self.handlers[S_PORT_GET] = {Message.T_REPLY: self.receive_port}
         self.handlers[S_MONITOR] = {Message.T_NOTIFY: {
             'dpid_monitor': self.monitor_dpid,
@@ -251,6 +253,9 @@ class OVSMonitor(object):
                 LOG.info("update port: %s", new_port)
                 self.notify_quantum(new_port)
 
+    def set_controller(self):
+        pass
+
     def update_ovs_node(self):
         dpid_or_ip = or_(self.db.ovs_node.dpid == self.dpid,
                          self.db.ovs_node.address == self.tunnel_ip)
@@ -282,6 +287,7 @@ class OVSMonitor(object):
                 if name == FLAGS.int_bridge and isinstance(dpid, basestring):
                     LOG.debug("datapath_id = %s", dpid)
                     self.dpid = dpid
+                    self.dpid_row = str(row)
                     break
 
     def monitor_port(self, msg):
@@ -314,13 +320,30 @@ class OVSMonitor(object):
                     "external_ids", "options"]}]}]')
         self.send_request("monitor", params)
 
+    def receive_set_controller(self, msg):
+        LOG.debug("set controller: %s", msg)
+        self.start_port_monitor()
+
+    def start_set_controller(self):
+        self.state = S_CTRL_SET
+        uuid_ = str(uuid.uuid4()).replace('-', '_')
+        params = json.from_string(
+            '["Open_vSwitch", \
+             {"op": "insert", "table": "Controller", \
+              "row": {"target": "tcp:%s"}, "uuid-name": "row%s"},\
+             {"op": "update", "table": "Bridge", \
+              "row": {"controller": ["named-uuid","row%s"]}, \
+              "where": [["_uuid","==",["uuid","%s"]]]}]' % 
+             (self.ctrl_addr, uuid_, uuid_, self.dpid_row))
+        self.send_request("transact", params)
+
     def receive_dpid(self, msg):
         if not "Bridge" in msg.result:
             return
         data = msg.result['Bridge']
         self.update_dpid(data)
         self.update_ovs_node()
-        self.start_port_monitor()
+        self.start_set_controller()
 
     def start_dpid_monitor(self):
         self.state = S_DPID_GET
@@ -427,7 +450,7 @@ def check_ofp_mode(db):
 
     servers = db.ofp_server.all()
 
-    ofp_contoroller_addr = None
+    ofp_controller_addr = None
     ofp_rest_api_addr = None
     for serv in servers:
         if serv.host_type == "REST_API":
@@ -475,12 +498,12 @@ def create_monitor(address, tunnel_ip):
         token = _get_auth_token()
     q_client = _get_quantum_client(token)
 
-    ofp_ctrl_addr_, ofp_rest_api_addr = check_ofp_mode(db)
+    ofp_ctrl_addr, ofp_rest_api_addr = check_ofp_mode(db)
     ryu_rest_client = ryu_client.OFPClient(ofp_rest_api_addr)
     gt_client = ryu_client.GRETunnelClient(ofp_rest_api_addr)
 
     mon = OVSMonitor(sock, address, db, q_client, ryu_rest_client, gt_client,
-                     tunnel_ip)
+                     str(ofp_ctrl_addr), tunnel_ip)
     mon.serve()
 
 
