@@ -31,7 +31,8 @@ from sqlalchemy.ext.sqlsoup import SqlSoup
 from ovs import json
 from ovs.jsonrpc import Message
 
-from quantumclient.v2_0 import client as q_client
+from quantumclient import client as q_client
+from quantumclient.v2_0 import client as q_clientv2
 
 from ryu.app import client as ryu_client
 from ryu.app import rest_nw_id
@@ -68,10 +69,33 @@ gflags.DEFINE_string(
     'auth strategy for connecting to quantum in admin context')
 
 
-def _get_quantum_client():
-    return q_client.Client(endpoint_url=FLAGS.quantum_url,
-                           auth_strategy=None,
-                           timeout=FLAGS.quantum_url_timeout)
+def _get_auth_token():
+    httpclient = q_client.HTTPClient(
+        username=FLAGS.quantum_admin_username,
+        tenant_name=FLAGS.quantum_admin_tenant_name,
+        password=FLAGS.quantum_admin_password,
+        auth_url=FLAGS.quantum_admin_auth_url,
+        timeout=FLAGS.quantum_url_timeout,
+        auth_strategy=FLAGS.quantum_auth_strategy)
+    try:
+        httpclient.authenticate()
+    except Exception as exc:
+        LOG.error("could not get auth token: %s", exc)
+        return None
+    LOG.debug("_get_auth_token: token=%s", httpclient.auth_token)
+    return httpclient.auth_token
+
+
+def _get_quantum_client(token):
+    if token:
+        my_client = q_clientv2.Client(
+            endpoint_url=FLAGS.quantum_url,
+            token=token, timeout=FLAGS.quantum_url_timeout)
+    else:
+        my_client = q_clientv2.Client(
+            endpoint_url=FLAGS.quantum_url,
+            auth_strategy=None, timeout=FLAGS.quantum_url_timeout)
+    return my_client
 
 
 PORT_UNKNOWN = 0
@@ -433,15 +457,21 @@ class QuantumAdapter(app_manager.RyuApp):
 
     @staticmethod
     def connection(sock, addr):
-        q_client = _get_quantum_client()
+        token = None
+        if FLAGS.quantum_auth_strategy:
+            token = _get_auth_token()
+        q_client = _get_quantum_client(token)
+
         db = SqlSoup(FLAGS.sql_connection,
                      session=scoped_session(
                          sessionmaker(autoflush=True,
                                       expire_on_commit=False,
                                       autocommit=True)))
+
         ofp_ctrl_addr_, ofp_rest_api_addr = check_ofp_mode(db)
         ryu_rest_client = ryu_client.OFPClient(ofp_rest_api_addr)
         gt_client = ryu_client.GRETunnelClient(ofp_rest_api_addr)
+
         mon = OVSMonitor(sock, addr, db, q_client, ryu_rest_client, gt_client)
         mon.serve()
 
