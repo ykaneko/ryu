@@ -253,9 +253,6 @@ class OVSMonitor(object):
                 LOG.info("update port: %s", new_port)
                 self.notify_quantum(new_port)
 
-    def set_controller(self):
-        pass
-
     def update_ovs_node(self):
         dpid_or_ip = or_(self.db.ovs_node.dpid == self.dpid,
                          self.db.ovs_node.address == self.tunnel_ip)
