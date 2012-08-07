@@ -13,9 +13,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import sys
 import gflags
 import logging
+import socket
+import ssl
+import sys
 import uuid
 
 from gevent import monkey
@@ -33,6 +35,7 @@ from ovs import json
 from ovs.jsonrpc import Message
 
 from quantumclient import client as q_client
+from quantumclient.common import exceptions as q_exc
 from quantumclient.v2_0 import client as q_clientv2
 
 from ryu.app import client as ryu_client
@@ -57,7 +60,7 @@ gflags.DEFINE_string('quantum_admin_username', 'quantum',
                      'username for connecting to quantum in admin context')
 gflags.DEFINE_string('quantum_admin_password', 'service_password',
                      'password for connecting to quantum in admin context')
-gflags.DEFINE_string('quantum_admin_tenant_name', '',
+gflags.DEFINE_string('quantum_admin_tenant_name', 'service',
                      'tenant name for connecting to quantum in admin context')
 gflags.DEFINE_string('quantum_admin_auth_url', 'http://localhost:5000/v2.0',
                      'auth url for connecting to quantum in admin context')
@@ -77,8 +80,8 @@ def _get_auth_token():
         auth_strategy=FLAGS.quantum_auth_strategy)
     try:
         httpclient.authenticate()
-    except Exception as exc:
-        LOG.error("could not get auth token: %s", exc)
+    except (q_exc.Unauthorized, q_exc.Forbidden, q_exc.EndpointNotFound) as e:
+        LOG.error("authentication failure: %s", e)
         return None
     LOG.debug("_get_auth_token: token=%s", httpclient.auth_token)
     return httpclient.auth_token
@@ -152,13 +155,13 @@ S_MONITOR = 3       # datapath-id/port monitoring
 
 
 class OVSMonitor(object):
-    def __init__(self, sock, addr, db, q_client, ryu_rest_client,
+    def __init__(self, sock, addr, db, q_api, ryu_rest_client,
                  gre_tunnel_client, ctrl_addr, tunnel_ip):
         super(OVSMonitor, self).__init__()
         self.socket = sock
         self.address = addr
         self.db = db
-        self.q_client = q_client
+        self.q_api = q_api
         self.api = ryu_rest_client
         self.tunnel_api = gre_tunnel_client
         self.ctrl_addr = ctrl_addr
@@ -190,7 +193,7 @@ class OVSMonitor(object):
             self.db.commit()
             return
         except (NoSuchTableError, OperationalError):
-            LOG.warn("could not access database")
+            LOG.error("could not access database")
             self.db.rollback()
             return
 
@@ -202,10 +205,9 @@ class OVSMonitor(object):
         body = {'port': port_data}
         LOG.debug("port-body = %s", body)
         try:
-            self.q_client.update_port(port_info.id, body)
-        except Exception as e:
-            LOG.debug("quantum_client.update_port failed: %s", e)
-            pass
+            self.q_api.update_port(port_info.id, body)
+        except q_exc.ConnectionFailed as e:
+            LOG.error("quantum update port failed: %s", e)
         self.db.commit()
 
     def update_gre_port(self, port):
@@ -216,7 +218,6 @@ class OVSMonitor(object):
         except exc.NoResultFound:
             LOG.debug("gre port not found: %s", port)
             #self._del_port(port.name, port.ofport)
-            pass
         else:
             LOG.debug("update gre port: %s", port)
             self.api.update_port(rest_nw_id.NW_ID_VPORT_GRE,
@@ -275,7 +276,6 @@ class OVSMonitor(object):
         self.db.commit()
 
     def update_dpid(self, data):
-        old_dpid = self.dpid
         for row in data:
             table = data[row]
             if "new" in table:
@@ -284,18 +284,18 @@ class OVSMonitor(object):
                 if name == FLAGS.int_bridge and isinstance(dpid, basestring):
                     LOG.debug("datapath_id = %s", dpid)
                     self.dpid = dpid
-                    self.dpid_row = str(row)
+                    self.dpid_row = row
                     break
 
     def monitor_port(self, msg):
-        key, args = msg.params
+        _key, args = msg.params
         if not "Interface" in args:
             return
         data = args['Interface']
         self.update_port(data)
 
     def monitor_dpid(self, msg):
-        key, args = msg.params
+        _key, args = msg.params
         if not "Bridge" in args:
             return
         data = args['Bridge']
@@ -319,6 +319,14 @@ class OVSMonitor(object):
 
     def receive_set_controller(self, msg):
         LOG.debug("set controller: %s", msg)
+        for row in msg.result:
+            if "error" in row:
+                err = str(row["error"])
+                if "details" in row:
+                    err += ": " + str(row["details"])
+                LOG.error("could not set controller: %s", err)
+                self.is_active = False
+                return
         self.start_port_monitor()
 
     def start_set_controller(self):
@@ -330,8 +338,8 @@ class OVSMonitor(object):
               "row": {"target": "tcp:%s"}, "uuid-name": "row%s"},\
              {"op": "update", "table": "Bridge", \
               "row": {"controller": ["named-uuid","row%s"]}, \
-              "where": [["_uuid","==",["uuid","%s"]]]}]' % 
-             (self.ctrl_addr, uuid_, uuid_, self.dpid_row))
+              "where": [["_uuid","==",["uuid","%s"]]]}]' %
+            (str(self.ctrl_addr), uuid_, uuid_, str(self.dpid_row)))
         self.send_request("transact", params)
 
     def receive_dpid(self, msg):
@@ -381,7 +389,7 @@ class OVSMonitor(object):
                 self.shutdown()
             elif handler:
                 if msg.method == "update":
-                    key, args = msg.params
+                    key, _args = msg.params
                     if key in handler:
                         handler[key](msg)
             else:
@@ -392,12 +400,12 @@ class OVSMonitor(object):
         return
 
     def process_msg(self):
-        json = self.parser.finish()
+        _json = self.parser.finish()
         self.parser = None
-        if isinstance(json, basestring):
-            LOG.warn("error parsing stream: %s", json)
+        if isinstance(_json, basestring):
+            LOG.warn("error parsing stream: %s", _json)
             return
-        msg = Message.from_json(json)
+        msg = Message.from_json(_json)
         if not isinstance(msg, Message):
             LOG.warn("received bad JSON-RPC message: %s", msg)
             return
@@ -472,19 +480,18 @@ def check_ofp_mode(db):
 def create_monitor(address, tunnel_ip):
     proto, host, port = address.split(':')
     if proto not in ['tcp', 'ssl']:
-        LOG.error("unknown protocol: %s", address)
-        raise Exception()
+        proto = 'tcp'
     sock = gevent.socket.socket()
     if proto == 'ssl':
         sock = gevent.ssl.wrap_socket(sock)
     try:
         sock.connect((host, int(port)))
-    except gevent.socket.error as exc:
-        LOG.error("TCP connection failure: %s", exc)
-        return
-    except gevent.ssl.SSLError as exc:
-        LOG.error("SSL connection failure: %s", exc)
-        return
+    except (socket.error, socket.timeout) as e:
+        LOG.error("TCP connection failure: %s", e)
+        raise e
+    except ssl.SSLError as e:
+        LOG.error("SSL connection failure: %s", e)
+        raise e
 
     db = SqlSoup(FLAGS.sql_connection,
                  session=scoped_session(sessionmaker(autoflush=True,
@@ -493,19 +500,19 @@ def create_monitor(address, tunnel_ip):
     token = None
     if FLAGS.quantum_auth_strategy:
         token = _get_auth_token()
-    q_client = _get_quantum_client(token)
+    q_api = _get_quantum_client(token)
 
     ofp_ctrl_addr, ofp_rest_api_addr = check_ofp_mode(db)
     ryu_rest_client = ryu_client.OFPClient(ofp_rest_api_addr)
     gt_client = ryu_client.GRETunnelClient(ofp_rest_api_addr)
 
-    mon = OVSMonitor(sock, address, db, q_client, ryu_rest_client, gt_client,
-                     str(ofp_ctrl_addr), tunnel_ip)
+    mon = OVSMonitor(sock, address, db, q_api, ryu_rest_client, gt_client,
+                     ofp_ctrl_addr, tunnel_ip)
     mon.serve()
 
 
 class QuantumAdapter(app_manager.RyuApp):
-    def __init__(self, *_args, **kwargs):
+    def __init__(self):
         super(QuantumAdapter, self).__init__()
         create_monitor('tcp:192.168.122.10:6632', '192.168.122.10')
 
@@ -514,7 +521,7 @@ def main():
     log = logging.getLogger()
     log.addHandler(logging.StreamHandler(sys.stderr))
     log.setLevel(logging.DEBUG)
-    adapter = QuantumAdapter()
+    QuantumAdapter()
 
 
 if __name__ == '__main__':
