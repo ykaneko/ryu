@@ -25,11 +25,11 @@ import gevent
 monkey.patch_all()
 
 from sqlalchemy import or_
-from sqlalchemy.exc import OperationalError, NoSuchTableError
-from sqlalchemy.orm import exc
+from sqlalchemy.exc import NoSuchTableError, OperationalError
+from sqlalchemy.ext.sqlsoup import SqlSoup
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.orm import scoped_session
-from sqlalchemy.ext.sqlsoup import SqlSoup
+from sqlalchemy.orm.exc import NoResultFound
 
 from ovs import json
 from ovs.jsonrpc import Message
@@ -183,29 +183,34 @@ class OVSMonitor(object):
             'port_monitor': self.monitor_port
         }}
 
-    def notify_quantum(self, port):
+    def notify_quantum(self, port, delete=False):
         LOG.debug("notify: %s", port)
         try:
             port_info = self.db.ports.filter(
                 self.db.ports.id == port.ext_ids['iface-id']).one()
-        except exc.NoResultFound:
+        except NoResultFound:
             LOG.warn("port not found: %s", port.ext_ids['iface-id'])
-            self.db.commit()
             return
         except (NoSuchTableError, OperationalError):
             LOG.error("could not access database")
-            self.db.rollback()
             return
 
+        if port.link_state == 'up':
+            state = True
+        else:
+            state = False
         port_data = {
-            'state': 'ACTIVE',
+            'admin_state_up': state,
             'datapath_id': self.dpid,
             'port_no': port.ofport,
         }
         body = {'port': port_data}
         LOG.debug("port-body = %s", body)
         try:
-            self.q_api.update_port(port_info.id, body)
+            if not delete:
+                self.q_api.update_port(port_info.id, body)
+            else:
+                self.q_api.delete_port(port_info.id, body)
         except q_exc.ConnectionFailed as e:
             LOG.error("quantum update port failed: %s", e)
         self.db.commit()
@@ -215,9 +220,8 @@ class OVSMonitor(object):
         try:
             node = self.db.ovs_node.filter(
                 self.db.ovs_node.address == port.options['remote_ip']).one()
-        except exc.NoResultFound:
+        except NoResultFound:
             LOG.debug("gre port not found: %s", port)
-            #self._del_port(port.name, port.ofport)
         else:
             LOG.debug("update gre port: %s", port)
             self.api.update_port(rest_nw_id.NW_ID_VPORT_GRE,
@@ -240,6 +244,8 @@ class OVSMonitor(object):
             if not new_port:
                 if old_port.get_port_type() != PORT_UNKNOWN:
                     LOG.info("delete port: %s", old_port)
+                    if old_port.get_port_type() != PORT_TUNNEL:
+                        self.notify_quantum(old_port, delete=True)
                 continue
             if not old_port:
                 if new_port.get_port_type() != PORT_UNKNOWN:
@@ -259,7 +265,7 @@ class OVSMonitor(object):
                          self.db.ovs_node.address == self.tunnel_ip)
         try:
             nodes = self.db.ovs_node.filter(dpid_or_ip).all()
-        except exc.NoResultFound:
+        except NoResultFound:
             pass
         else:
             for node in nodes:
@@ -397,6 +403,7 @@ class OVSMonitor(object):
         else:
             LOG.warn("unsolicited JSON-RPC reply or error: %s", msg)
 
+        self.db.commit()
         return
 
     def process_msg(self):
