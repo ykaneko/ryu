@@ -210,7 +210,7 @@ class OVSMonitor(object):
             if not delete:
                 self.q_api.update_port(port_info.id, body)
             else:
-                self.q_api.delete_port(port_info.id, body)
+                self.q_api.delete_port(port_info.id)
         except q_exc.ConnectionFailed as e:
             LOG.error("quantum update port failed: %s", e)
         self.db.commit()
@@ -511,7 +511,7 @@ def create_monitor(address, tunnel_ip):
 
     ofp_ctrl_addr, ofp_rest_api_addr = check_ofp_mode(db)
     ryu_rest_client = ryu_client.OFPClient(ofp_rest_api_addr)
-    gt_client = ryu_client.GRETunnelClient(ofp_rest_api_addr)
+    gt_client = ryu_client.TunnelClient(ofp_rest_api_addr)
 
     mon = OVSMonitor(sock, address, db, q_api, ryu_rest_client, gt_client,
                      ofp_ctrl_addr, tunnel_ip)
