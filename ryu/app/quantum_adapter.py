@@ -183,16 +183,20 @@ class OVSMonitor(object):
             'port_monitor': self.monitor_port
         }}
 
-    def notify_quantum(self, port, delete=False):
-        LOG.debug("notify: %s", port)
+    def update_vif_port(self, port, delete=False):
+        LOG.debug("update_vif_port: %s", port)
         try:
             port_info = self.db.ports.filter(
                 self.db.ports.id == port.ext_ids['iface-id']).one()
         except NoResultFound:
             LOG.warn("port not found: %s", port.ext_ids['iface-id'])
+            self.db.commit()
             return
         except (NoSuchTableError, OperationalError):
             LOG.error("could not access database")
+            self.db.rollback()
+            # TODO: If OperationalError occurred, it should re-connect to
+            # the database (re-create SplSoup object)
             return
 
         if port.link_state == 'up':
@@ -211,8 +215,10 @@ class OVSMonitor(object):
                 self.q_api.update_port(port_info.id, body)
             else:
                 self.q_api.delete_port(port_info.id)
-        except q_exc.ConnectionFailed as e:
+        except (q_exc.ConnectionFailed, q_exc.QuantumClientException) as e:
             LOG.error("quantum update port failed: %s", e)
+            # TODO: When authentication failure occurred, it should get auth
+            # token again
         self.db.commit()
 
     def update_gre_port(self, port):
@@ -228,6 +234,7 @@ class OVSMonitor(object):
                                  self.dpid, port.ofport)
             self.tunnel_api.update_remote_dpid(self.dpid, port.ofport,
                                                node.dpid)
+        self.db.commit()
 
     def update_port(self, data):
         for row in data:
@@ -245,20 +252,20 @@ class OVSMonitor(object):
                 if old_port.get_port_type() != PORT_UNKNOWN:
                     LOG.info("delete port: %s", old_port)
                     if old_port.get_port_type() != PORT_TUNNEL:
-                        self.notify_quantum(old_port, delete=True)
+                        self.update_vif_port(old_port, delete=True)
                 continue
             if not old_port:
                 if new_port.get_port_type() != PORT_UNKNOWN:
                     LOG.info("create port: %s", new_port)
                     if new_port.get_port_type() != PORT_TUNNEL:
-                        self.notify_quantum(new_port)
+                        self.update_vif_port(new_port)
                     else:
                         self.update_gre_port(new_port)
                 continue
             if (new_port.get_port_type() == PORT_GUEST or
                     new_port.get_port_type() == PORT_GATEWAY):
                 LOG.info("update port: %s", new_port)
-                self.notify_quantum(new_port)
+                self.update_vif_port(new_port)
 
     def update_ovs_node(self):
         dpid_or_ip = or_(self.db.ovs_node.dpid == self.dpid,
