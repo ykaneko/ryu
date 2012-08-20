@@ -39,8 +39,10 @@ from quantumclient.common import exceptions as q_exc
 from quantumclient.v2_0 import client as q_clientv2
 
 from ryu.app import client as ryu_client
+from ryu.app import conf_switch_key as cs_key
 from ryu.app import rest_nw_id
 from ryu.base import app_manager
+from ryu.controller import conf_switch, handler
 
 
 LOG = logging.getLogger('quantum_adapter')
@@ -155,23 +157,24 @@ S_MONITOR = 3       # datapath-id/port monitoring
 
 
 class OVSMonitor(object):
-    def __init__(self, sock, addr, db, q_api, ryu_rest_client,
-                 gre_tunnel_client, ctrl_addr, tunnel_ip):
+    def __init__(self, dpid, db, q_api, ryu_rest_client, gre_tunnel_client,
+                 ctrl_addr):
         super(OVSMonitor, self).__init__()
-        self.socket = sock
-        self.address = addr
+        self.dpid = dpid
         self.db = db
         self.q_api = q_api
         self.api = ryu_rest_client
         self.tunnel_api = gre_tunnel_client
         self.ctrl_addr = ctrl_addr
-        self.tunnel_ip = tunnel_ip
 
+        self.address = None
+        self.tunnel_ip = None
+        self.int_bridge = None
+        self.socket = None
         self.state = None
         self.parser = None
-        self.dpid = None
         self.dpid_row = None
-        self.is_active = True
+        self.is_active = False
 
         self.handlers = {}
         self.handlers[S_DPID_GET] = {Message.T_REPLY: self.receive_dpid}
@@ -179,7 +182,6 @@ class OVSMonitor(object):
                                      self.receive_set_controller}
         self.handlers[S_PORT_GET] = {Message.T_REPLY: self.receive_port}
         self.handlers[S_MONITOR] = {Message.T_NOTIFY: {
-            'dpid_monitor': self.monitor_dpid,
             'port_monitor': self.monitor_port
         }}
 
@@ -267,37 +269,16 @@ class OVSMonitor(object):
                 LOG.info("update port: %s", new_port)
                 self.update_vif_port(new_port)
 
-    def update_ovs_node(self):
-        dpid_or_ip = or_(self.db.ovs_node.dpid == self.dpid,
-                         self.db.ovs_node.address == self.tunnel_ip)
-        try:
-            nodes = self.db.ovs_node.filter(dpid_or_ip).all()
-        except NoResultFound:
-            pass
-        else:
-            for node in nodes:
-                LOG.debug("node %s", node)
-                if node.dpid == self.dpid and node.address == self.tunnel_ip:
-                    pass
-                elif node.dpid == self.dpid:
-                    LOG.warn("updating node %s %s -> %s",
-                             node.dpid, node.address, self.tunnel_ip)
-                else:
-                    LOG.warn("deleting node %s", node)
-                self.db.delete(node)
-        self.db.ovs_node.insert(dpid=self.dpid, address=self.tunnel_ip)
-        self.db.commit()
-
     def update_dpid(self, data):
         for row in data:
             table = data[row]
             if "new" in table:
-                name = table['new']['name']
+                int_bridge = table['new']['name']
                 dpid = table['new']['datapath_id']
-                if name == FLAGS.int_bridge and isinstance(dpid, basestring):
-                    LOG.debug("datapath_id = %s", dpid)
-                    self.dpid = dpid
+                if dpid == self.dpid:
+                    LOG.debug("datapath_id=%s name=%s", dpid, int_bridge)
                     self.dpid_row = row
+                    self.int_bridge = int_bridge
                     break
 
     def monitor_port(self, msg):
@@ -306,13 +287,6 @@ class OVSMonitor(object):
             return
         data = args['Interface']
         self.update_port(data)
-
-    def monitor_dpid(self, msg):
-        _key, args = msg.params
-        if not "Bridge" in args:
-            return
-        data = args['Bridge']
-        self.update_dpid(data)
 
     def receive_port(self, msg):
         if not "Interface" in msg.result:
@@ -360,7 +334,6 @@ class OVSMonitor(object):
             return
         data = msg.result['Bridge']
         self.update_dpid(data)
-        self.update_ovs_node()
         self.start_set_controller()
 
     def start_dpid_monitor(self):
@@ -370,14 +343,10 @@ class OVSMonitor(object):
                 {"Bridge": {"columns": ["datapath_id", "name"]}}]')
         self.send_request("monitor", params)
 
-    def shutdown(self):
-        LOG.info("shutdown: %s: dpid=%s", self.address, self.dpid)
-        self.is_active = False
-
     def handle_rpc(self, msg):
-        handler = None
+        _handler = None
         try:
-            handler = self.handlers[self.state][msg.type]
+            _handler = self.handlers[self.state][msg.type]
         except KeyError:
             pass
 
@@ -385,26 +354,26 @@ class OVSMonitor(object):
             if msg.method == "echo":
                 reply = Message.create_reply(msg.params, msg.id)
                 self.send(reply)
-            elif handler:
-                handler(msg)
+            elif _handler:
+                _handler(msg)
             else:
                 reply = Message.create_error({"error": "unknown method"},
                                              msg.id)
                 self.send(reply)
                 LOG.warn("unknown request: %s", msg)
         elif msg.type == Message.T_REPLY:
-            if handler:
-                handler(msg)
+            if _handler:
+                _handler(msg)
             else:
                 LOG.warn("unknown reply: %s", msg)
         elif msg.type == Message.T_NOTIFY:
             if msg.method == "shutdown":
                 self.shutdown()
-            elif handler:
+            elif _handler:
                 if msg.method == "update":
                     key, _args = msg.params
-                    if key in handler:
-                        handler[key](msg)
+                    if key in _handler:
+                        _handler[key](msg)
             else:
                 LOG.warn("unknown notification: %s", msg)
         else:
@@ -456,9 +425,38 @@ class OVSMonitor(object):
     def close(self):
         self.socket.close()
 
+    def set_ovsdb_addr(self, address):
+        _proto, _host, _port = address.split(':')
+        self.address = address
+
+    def shutdown(self):
+        LOG.info("shutdown: %s: dpid=%s", self.address, self.dpid)
+        self.is_active = False
+
     def serve(self):
-        LOG.info("connect: %s", self.address)
+        if not self.address:
+            return
         self.api.update_network(rest_nw_id.NW_ID_VPORT_GRE)
+
+        proto, host, port = self.address.split(':')
+        if proto not in ['tcp', 'ssl']:
+            proto = 'tcp'
+        if self.socket:
+            self.close()
+        self.socket = gevent.socket.socket()
+        if proto == 'ssl':
+            self.socket = gevent.ssl.wrap_socket(self.socket)
+        try:
+            self.socket.connect((host, int(port)))
+        except (socket.error, socket.timeout) as e:
+            LOG.error("TCP connection failure: %s", e)
+            raise e
+        except ssl.SSLError as e:
+            LOG.error("SSL connection failure: %s", e)
+            raise e
+        LOG.info("connect: %s", self.address)
+        self.is_active = True
+
         self.start_dpid_monitor()
         self.recv_loop()
         self.close()
@@ -491,22 +489,7 @@ def check_ofp_mode(db):
     return (ofp_controller_addr, ofp_rest_api_addr)
 
 
-def create_monitor(address, tunnel_ip):
-    proto, host, port = address.split(':')
-    if proto not in ['tcp', 'ssl']:
-        proto = 'tcp'
-    sock = gevent.socket.socket()
-    if proto == 'ssl':
-        sock = gevent.ssl.wrap_socket(sock)
-    try:
-        sock.connect((host, int(port)))
-    except (socket.error, socket.timeout) as e:
-        LOG.error("TCP connection failure: %s", e)
-        raise e
-    except ssl.SSLError as e:
-        LOG.error("SSL connection failure: %s", e)
-        raise e
-
+def create_monitor(dpid):
     db = SqlSoup(FLAGS.sql_connection,
                  session=scoped_session(sessionmaker(autoflush=True,
                                                      expire_on_commit=False,
@@ -520,23 +503,88 @@ def create_monitor(address, tunnel_ip):
     ryu_rest_client = ryu_client.OFPClient(ofp_rest_api_addr)
     gt_client = ryu_client.TunnelClient(ofp_rest_api_addr)
 
-    mon = OVSMonitor(sock, address, db, q_api, ryu_rest_client, gt_client,
-                     ofp_ctrl_addr, tunnel_ip)
-    mon.serve()
+    return OVSMonitor(dpid, db, q_api, ryu_rest_client, gt_client,
+                      ofp_ctrl_addr)
 
 
 class QuantumAdapter(app_manager.RyuApp):
-    def __init__(self):
+    _CONTEXTS = {
+        'conf_switch': conf_switch.ConfSwitchSet
+    }
+
+    def __init__(self, *_args, **kwargs):
         super(QuantumAdapter, self).__init__()
-        create_monitor('tcp:192.168.122.10:6632', '192.168.122.10')
+        self.cs = kwargs['conf_switch']
+        self.db = SqlSoup(FLAGS.sql_connection,
+                          session=scoped_session(
+                              sessionmaker(autoflush=True,
+                                           expire_on_commit=False,
+                                           autocommit=False)))
+        self.monitors = {}
 
+    @staticmethod
+    def update_ovs_node(db, dpid, tunnel_ip):
+        dpid_or_ip = or_(db.ovs_node.dpid == dpid,
+                         db.ovs_node.address == tunnel_ip)
+        try:
+            nodes = db.ovs_node.filter(dpid_or_ip).all()
+        except NoResultFound:
+            pass
+        else:
+            for node in nodes:
+                LOG.debug("node %s", node)
+                if node.dpid == dpid and node.address == tunnel_ip:
+                    pass
+                elif node.dpid == dpid:
+                    LOG.warn("updating node %s %s -> %s",
+                             node.dpid, node.address, tunnel_ip)
+                else:
+                    LOG.warn("deleting node %s", node)
+                db.delete(node)
+        db.ovs_node.insert(dpid=dpid, address=tunnel_ip)
+        db.commit()
 
-def main():
-    log = logging.getLogger()
-    log.addHandler(logging.StreamHandler(sys.stderr))
-    log.setLevel(logging.DEBUG)
-    QuantumAdapter()
+    @staticmethod
+    def delete_ovs_node(db, dpid):
+        try:
+            node = db.ovs_node.filter(db.ovs_node.dpid == dpid).one()
+        except NoResultFound:
+            pass
+        else:
+            db.delete(node)
+        db.commit()
 
+    @handler.set_ev_cls(conf_switch.EventConfSwitchSet,
+                        conf_switch.CONF_SWITCH_EV_DISPATCHER)
+    def conf_switch_set_handler(self, ev):
+        LOG.debug("conf_switch set: %s", ev)
+        dpid = ev.dpid
+        if ev.key == cs_key.OVSDB_ADDR:
+            if dpid in self.monitors:
+                mon = self.monitors[dpid]
+                mon.shutdown()
+            mon = create_monitor(dpid)
+            mon.set_ovsdb_addr(ev.value)
+            mon.serve()
+            self.monitors[dpid] = mon
+        elif ev.key == cs_key.OVS_TUNNEL_ADDR:
+            self.update_ovs_node(self.db, dpid, ev.value)
+        else:
+            LOG.debug("unknown event: %s", ev)
 
-if __name__ == '__main__':
-    main()
+    @handler.set_ev_cls(conf_switch.EventConfSwitchDel,
+                        conf_switch.CONF_SWITCH_EV_DISPATCHER)
+    def conf_switch_del_handler(self, ev):
+        LOG.debug("conf_switch del: %s", ev)
+        dpid = ev.dpid
+        if ev.key == cs_key.OVSDB_ADDR:
+            if dpid not in self.monitors:
+                LOG.error("no monitor found: %s", ev)
+                return
+            mon = self.monitors[dpid]
+            mon.shutdown()
+            del(self.monitors[dpid])
+        elif ev.key == cs_key.OVS_TUNNEL_ADDR:
+            self.delete_ovs_node(self.db, dpid)
+        else:
+            LOG.debug("unknown event: %s", ev)
