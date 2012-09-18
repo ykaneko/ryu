@@ -62,7 +62,10 @@ def main():
     FLAGS.app_lists += ['ryu.controller.ofp_handler']
 
     if len(args) > 1:
-        FLAGS.app_lists += args[1:]
+        if '--' in args:
+            FLAGS.app_lists += args[1:args.index('--', 1)]
+        else:
+            FLAGS.app_lists += args[1:]
 
     app_mgr = AppManager()
     app_mgr.load_apps(FLAGS.app_lists)
