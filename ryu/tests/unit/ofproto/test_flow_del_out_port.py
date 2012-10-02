@@ -13,9 +13,10 @@ LOG = logging.getLogger(__name__)
 
 
 class Test(app_manager.RyuApp):
+    OFP_VERSIONS = [ofproto_v1_2.OFP_VERSION]
     _CONTEXTS = {
         'dpset': dpset.DPSet,
-        }
+    }
 
     def __init__(self, *args, **kwargs):
         super(Test, self).__init__(*args, **kwargs)
@@ -23,24 +24,24 @@ class Test(app_manager.RyuApp):
         self._verify = None
 
     def send_flow_stats(self, dp):
-        # match = dp.ofproto_parser.OFPMatch()
-        # m = dp.ofproto_parser.OFPFlowStatsRequest(dp, dp.ofproto.OFPTT_ALL,
-        #                                           dp.ofproto.OFPP_ANY,
-        #                                           dp.ofproto.OFPG_ANY,
-        #                                           0, 0, match)
-        rule = nx_match.ClsRule()
-        match = dp.ofproto_parser.OFPMatch(*rule.match_tuple())
-        m = dp.ofproto_parser.OFPFlowStatsRequest(dp, 0, match, 
-                                                  0xff, dp.ofproto.OFPP_NONE)
+        match = dp.ofproto_parser.OFPMatch()
+        m = dp.ofproto_parser.OFPFlowStatsRequest(dp, dp.ofproto.OFPTT_ALL,
+                                                  dp.ofproto.OFPP_ANY,
+                                                  dp.ofproto.OFPG_ANY,
+                                                  0, 0, match)
+        # rule = nx_match.ClsRule()
+        # match = dp.ofproto_parser.OFPMatch(*rule.match_tuple())
+        # m = dp.ofproto_parser.OFPFlowStatsRequest(dp, 0, match,
+        #                                           0xff, dp.ofproto.OFPP_ANY)
 
         dp.send_msg(m)
 
     def mod_flow(self, dp, actions=None, command=None,
                  table_id=None, out_port=None):
-        # inst = []
-        # if actions:
-        #     inst = [dp.ofproto_parser.OFPInstructionActions(
-        #             dp.ofproto.OFPIT_APPLY_ACTIONS, actions)]
+        inst = []
+        if actions:
+            inst = [dp.ofproto_parser.OFPInstructionActions(
+                    dp.ofproto.OFPIT_APPLY_ACTIONS, actions)]
 
         if not command:
             command = dp.ofproto.OFPFC_ADD
@@ -49,20 +50,20 @@ class Test(app_manager.RyuApp):
             table_id = dp.ofproto.OFPTT_ALL
 
         if not out_port:
-            #out_port = dp.ofproto.OFPP_ANY
-            out_port = dp.ofproto.OFPP_NONE
+            out_port = dp.ofproto.OFPP_ANY
+            #out_port = dp.ofproto.OFPP_NONE
 
-        # match = dp.ofproto_parser.OFPMatch()
-        # m = dp.ofproto_parser.OFPFlowMod(dp, 0, 0, table_id,
-        #                                  command,
-        #                                  0, 0, 0xff, 0xffffffff,
-        #                                  out_port,
-        #                                  dp.ofproto.OFPG_ANY,
-        #                                  0, match, inst)
-        # dp.send_msg(m)
-        rule = nx_match.ClsRule()
-        dp.send_flow_mod(rule, 0, (table_id << 8 | command),
-                         0, 0, actions=actions)
+        match = dp.ofproto_parser.OFPMatch()
+        m = dp.ofproto_parser.OFPFlowMod(dp, 0, 0, table_id,
+                                         command,
+                                         0, 0, 0xff, 0xffffffff,
+                                         out_port,
+                                         dp.ofproto.OFPG_ANY,
+                                         0, match, inst)
+        dp.send_msg(m)
+        # rule = nx_match.ClsRule()
+        # dp.send_flow_mod(rule, 0, (table_id << 8 | command),
+        #                  0, 0, actions=actions)
 
     def add_flow(self, dp):
         self._verify = 'Before'
@@ -97,11 +98,11 @@ class Test(app_manager.RyuApp):
         print '  %s flow_count:%s' % (self._verify, len(msg.body))
 
         for s in msg.body:
-            for a in s.actions:
-                print "    table_id=%s, port=%s" % (s.table_id, a.port)
-            # for i in s.instructions:
-            #     for a in i.actions:
-            #         print "    table_id=%s, port=%s" % (s.table_id, a.port)
+            # for a in s.actions:
+            #     print "    table_id=%s, port=%s" % (s.table_id, a.port)
+            for i in s.instructions:
+                for a in i.actions:
+                    print "    table_id=%s, port=%s" % (s.table_id, a.port)
 
         if self._verify == 'Before':
             self.del_flow(dp)
