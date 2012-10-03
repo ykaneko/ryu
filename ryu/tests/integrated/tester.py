@@ -150,7 +150,7 @@ class TestFlowBase(app_manager.RyuApp):
 
     @handler.set_ev_cls(dpset.EventDP, dpset.DPSET_EV_DISPATCHER)
     def handler_datapath(self, ev):
-        if ev.enter:
+        if ev.enter_leave:
             self.start_next_test(ev.dp)
 
     @set_ev_cls(ofp_event.EventOFPBarrierReply, MAIN_DISPATCHER)
