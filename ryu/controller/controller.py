@@ -124,9 +124,9 @@ class Datapath(object):
         self.send_q = Queue(16)
 
         # circular reference self.ev_q.aux == self
-        self.ev_q = dispatcher.EventQueue(handler.QUEUE_NAME_OFP_MSG,
-                                          handler.HANDSHAKE_DISPATCHER,
-                                          self)
+        self.ev_q = dispatcher.EventQueueDirect(handler.QUEUE_NAME_OFP_MSG,
+                                                handler.HANDSHAKE_DISPATCHER,
+                                                self)
 
         self.set_version(max(self.supported_ofp_version))
         self.xid = random.randint(0, self.ofproto.MAX_XID)
