@@ -27,6 +27,7 @@ monkey.patch_all()
 from ryu import log
 log.early_init_log(logging.DEBUG)
 
+from ryu import flags
 from ryu import version
 from ryu import utils
 from ryu.app import wsgi
