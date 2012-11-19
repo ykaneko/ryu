@@ -94,8 +94,8 @@ class DPSet(object):
 
         self.dps = {}   # datapath_id => class Datapath
         self.port_state = {}  # datapath_id => ports
-        self.ev_q = dispatcher.EventQueue(QUEUE_NAME_DPSET,
-                                          DPSET_EV_DISPATCHER)
+        self.ev_q = dispatcher.EventQueueThread(QUEUE_NAME_DPSET,
+                                                DPSET_EV_DISPATCHER)
         handler.register_instance(self)
 
     def register(self, dp):
