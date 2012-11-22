@@ -118,6 +118,7 @@ class OFPMatch(collections.namedtuple('OFPMatchBase', (
 
 class OFPActionHeader(object):
     def __init__(self, type_, len_):
+        super(OFPActionHeader, self).__init__()
         self.type = type_
         self.len = len_
 
@@ -216,9 +217,6 @@ class OFPActionVlanPcp(OFPAction):
 @OFPAction.register_action_type(ofproto_v1_0.OFPAT_STRIP_VLAN,
                                 ofproto_v1_0.OFP_ACTION_HEADER_SIZE)
 class OFPActionStripVlan(OFPAction):
-    def __init__(self):
-        super(OFPActionStripVlan, self).__init__()
-
     @classmethod
     def parser(cls, buf, offset):
         type_, len_ = struct.unpack_from(
@@ -250,15 +248,13 @@ class OFPActionDlAddr(OFPAction):
 @OFPAction.register_action_type(ofproto_v1_0.OFPAT_SET_DL_SRC,
                                 ofproto_v1_0.OFP_ACTION_DL_ADDR_SIZE)
 class OFPActionSetDlSrc(OFPActionDlAddr):
-    def __init__(self, dl_addr):
-        super(OFPActionSetDlSrc, self).__init__(dl_addr)
+    pass
 
 
 @OFPAction.register_action_type(ofproto_v1_0.OFPAT_SET_DL_DST,
                                 ofproto_v1_0.OFP_ACTION_DL_ADDR_SIZE)
 class OFPActionSetDlDst(OFPActionDlAddr):
-    def __init__(self, dl_addr):
-        super(OFPActionSetDlDst, self).__init__(dl_addr)
+    pass
 
 
 class OFPActionNwAddr(OFPAction):
@@ -283,15 +279,13 @@ class OFPActionNwAddr(OFPAction):
 @OFPAction.register_action_type(ofproto_v1_0.OFPAT_SET_NW_SRC,
                                 ofproto_v1_0.OFP_ACTION_NW_ADDR_SIZE)
 class OFPActionSetNwSrc(OFPActionNwAddr):
-    def __init__(self, nw_addr):
-        super(OFPActionSetNwSrc, self).__init__(nw_addr)
+    pass
 
 
 @OFPAction.register_action_type(ofproto_v1_0.OFPAT_SET_NW_DST,
                                 ofproto_v1_0.OFP_ACTION_NW_ADDR_SIZE)
 class OFPActionSetNwDst(OFPActionNwAddr):
-    def __init__(self, nw_addr):
-        super(OFPActionSetNwDst, self).__init__(nw_addr)
+    pass
 
 
 @OFPAction.register_action_type(ofproto_v1_0.OFPAT_SET_NW_TOS,
@@ -336,15 +330,13 @@ class OFPActionTpPort(OFPAction):
 @OFPAction.register_action_type(ofproto_v1_0.OFPAT_SET_TP_SRC,
                                 ofproto_v1_0.OFP_ACTION_TP_PORT_SIZE)
 class OFPActionSetTpSrc(OFPActionTpPort):
-    def __init__(self, tp):
-        super(OFPActionSetTpSrc, self).__init__(tp)
+    pass
 
 
 @OFPAction.register_action_type(ofproto_v1_0.OFPAT_SET_TP_DST,
                                 ofproto_v1_0.OFP_ACTION_TP_PORT_SIZE)
 class OFPActionSetTpDst(OFPActionTpPort):
-    def __init__(self, tp):
-        super(OFPActionSetTpDst, self).__init__(tp)
+    pass
 
 
 @OFPAction.register_action_type(ofproto_v1_0.OFPAT_ENQUEUE,
@@ -405,6 +397,7 @@ class NXActionHeader(object):
         return _register_nx_action_subtype
 
     def __init__(self, subtype_, len_):
+        super(NXActionHeader, self).__init__()
         self.type = ofproto_v1_0.OFPAT_VENDOR
         self.len = len_
         self.vendor = ofproto_v1_0.NX_VENDOR_ID
@@ -1038,6 +1031,7 @@ class OFPQueuePropHeader(object):
         return _register_queue_propery
 
     def __init__(self):
+        super(OFPQueuePropHeader, self).__init__()
         self.property = self.cls_prop_type
         self.len = self.cls_prop_len
 
@@ -1060,9 +1054,6 @@ class OFPQueuePropHeader(object):
 @OFPQueuePropHeader.register_queue_property(
     ofproto_v1_0.OFPQT_NONE, ofproto_v1_0.OFP_QUEUE_PROP_HEADER_SIZE)
 class OFPQueuePropNone(OFPQueuePropHeader):
-    def __init__(self):
-        super(OFPQueuePropNone, self).__init__()
-
     @classmethod
     def parser(cls, buf, offset):
         return cls()
@@ -1089,6 +1080,7 @@ class OFPQueuePropMinRate(OFPQueuePropHeader):
 
 class OFPPacketQueue(object):
     def __init__(self, queue_id, len_):
+        super(OFPPacketQueue, self).__init__()
         self.queue_id = queue_id
         self.len = len_
         self.properties = None
@@ -1121,8 +1113,7 @@ class OFPPacketQueue(object):
 @_register_parser
 @_set_msg_type(ofproto_v1_0.OFPT_HELLO)
 class OFPHello(MsgBase):
-    def __init__(self, datapath):
-        super(OFPHello, self).__init__(datapath)
+    pass
 
 
 @_register_parser
@@ -1489,9 +1480,6 @@ class NXTSetControllerId(NiciraHeader):
 @_register_parser
 @_set_msg_type(ofproto_v1_0.OFPT_FEATURES_REPLY)
 class OFPSwitchFeatures(MsgBase):
-    def __init__(self, datapath):
-        super(OFPSwitchFeatures, self).__init__(datapath)
-
     def __str__(self):
         buf = super(OFPSwitchFeatures, self).__str__() + ' port'
         for _port_no, p in getattr(self, 'ports', {}).items():
@@ -1526,9 +1514,6 @@ class OFPSwitchFeatures(MsgBase):
 @_register_parser
 @_set_msg_type(ofproto_v1_0.OFPT_PORT_STATUS)
 class OFPPortStatus(MsgBase):
-    def __init__(self, datapath):
-        super(OFPPortStatus, self).__init__(datapath)
-
     @classmethod
     def parser(cls, datapath, version, msg_type, msg_len, xid, buf):
         msg = super(OFPPortStatus, cls).parser(datapath, version, msg_type,
@@ -1544,9 +1529,6 @@ class OFPPortStatus(MsgBase):
 @_register_parser
 @_set_msg_type(ofproto_v1_0.OFPT_PACKET_IN)
 class OFPPacketIn(MsgBase):
-    def __init__(self, datapath):
-        super(OFPPacketIn, self).__init__(datapath)
-
     def __str__(self):
         buf = super(OFPPacketIn, self).__str__()
         return msg_str_attr(self, buf,
@@ -1572,9 +1554,6 @@ class OFPPacketIn(MsgBase):
 @_register_parser
 @_set_msg_type(ofproto_v1_0.OFPT_GET_CONFIG_REPLY)
 class OFPGetConfigReply(MsgBase):
-    def __init__(self, datapath):
-        super(OFPGetConfigReply, self).__init__(datapath)
-
     @classmethod
     def parser(cls, datapath, version, msg_type, msg_len, xid, buf):
         msg = super(OFPGetConfigReply, cls).parser(datapath, version, msg_type,
@@ -1588,16 +1567,12 @@ class OFPGetConfigReply(MsgBase):
 @_register_parser
 @_set_msg_type(ofproto_v1_0.OFPT_BARRIER_REPLY)
 class OFPBarrierReply(MsgBase):
-    def __init__(self, datapath):
-        super(OFPBarrierReply, self).__init__(datapath)
+    pass
 
 
 @_register_parser
 @_set_msg_type(ofproto_v1_0.OFPT_FLOW_REMOVED)
 class OFPFlowRemoved(MsgBase):
-    def __init__(self, datapath):
-        super(OFPFlowRemoved, self).__init__(datapath)
-
     def __str__(self):
         buf = super(OFPFlowRemoved, self).__str__()
         return msg_str_attr(self, buf,
@@ -1629,9 +1604,6 @@ class OFPFlowRemoved(MsgBase):
 @_register_parser
 @_set_msg_type(ofproto_v1_0.OFPT_QUEUE_GET_CONFIG_REPLY)
 class OFPQueueGetConfigReply(MsgBase):
-    def __init__(self, datapath):
-        super(OFPQueueGetConfigReply, self).__init__(datapath)
-
     @classmethod
     def parser(cls, datapath, version, msg_type, msg_len, xid, buf):
         msg = super(OFPQueueGetConfigReply, cls).parser(
@@ -1721,56 +1693,49 @@ class OFPStatsReply(MsgBase):
 @_set_stats_type(ofproto_v1_0.OFPST_DESC, OFPDescStats)
 @_set_msg_type(ofproto_v1_0.OFPT_STATS_REPLY)
 class OFPDescStatsReply(OFPStatsReply):
-    def __init__(self, datapath):
-        super(OFPDescStatsReply, self).__init__(datapath)
+    pass
 
 
 @OFPStatsReply.register_stats_type()
 @_set_stats_type(ofproto_v1_0.OFPST_FLOW, OFPFlowStats)
 @_set_msg_type(ofproto_v1_0.OFPT_STATS_REPLY)
 class OFPFlowStatsReply(OFPStatsReply):
-    def __init__(self, datapath):
-        super(OFPFlowStatsReply, self).__init__(datapath)
+    pass
 
 
 @OFPStatsReply.register_stats_type()
 @_set_stats_type(ofproto_v1_0.OFPST_AGGREGATE, OFPAggregateStats)
 @_set_msg_type(ofproto_v1_0.OFPT_STATS_REPLY)
 class OFPAggregateStatsReply(OFPStatsReply):
-    def __init__(self, datapath):
-        super(OFPAggregateStatsReply, self).__init__(datapath)
+    pass
 
 
 @OFPStatsReply.register_stats_type()
 @_set_stats_type(ofproto_v1_0.OFPST_TABLE, OFPTableStats)
 @_set_msg_type(ofproto_v1_0.OFPT_STATS_REPLY)
 class OFPTableStatsReply(OFPStatsReply):
-    def __init__(self, datapath):
-        super(OFPTableStatsReply, self).__init__(datapath)
+    pass
 
 
 @OFPStatsReply.register_stats_type()
 @_set_stats_type(ofproto_v1_0.OFPST_PORT, OFPPortStats)
 @_set_msg_type(ofproto_v1_0.OFPT_STATS_REPLY)
 class OFPPortStatsReply(OFPStatsReply):
-    def __init__(self, datapath):
-        super(OFPPortStatsReply, self).__init__(datapath)
+    pass
 
 
 @OFPStatsReply.register_stats_type()
 @_set_stats_type(ofproto_v1_0.OFPST_QUEUE, OFPQueueStats)
 @_set_msg_type(ofproto_v1_0.OFPT_STATS_REPLY)
 class OFPQueueStatsReply(OFPStatsReply):
-    def __init__(self, datapath):
-        super(OFPQueueStatsReply, self).__init__(datapath)
+    pass
 
 
 @OFPStatsReply.register_stats_type()
 @_set_stats_type(ofproto_v1_0.OFPST_VENDOR, OFPVendorStats)
 @_set_msg_type(ofproto_v1_0.OFPT_STATS_REPLY)
 class OFPVendorStatsReply(OFPStatsReply):
-    def __init__(self, datapath):
-        super(OFPVendorStatsReply, self).__init__(datapath)
+    pass
 
 
 #
@@ -1782,14 +1747,12 @@ class OFPVendorStatsReply(OFPStatsReply):
 @_set_msg_reply(OFPSwitchFeatures)
 @_set_msg_type(ofproto_v1_0.OFPT_FEATURES_REQUEST)
 class OFPFeaturesRequest(MsgBase):
-    def __init__(self, datapath):
-        super(OFPFeaturesRequest, self).__init__(datapath)
+    pass
 
 
 @_set_msg_type(ofproto_v1_0.OFPT_GET_CONFIG_REQUEST)
 class OFPGetConfigRequest(MsgBase):
-    def __init__(self, datapath):
-        super(OFPGetConfigRequest, self).__init__(datapath)
+    pass
 
 
 @_set_msg_type(ofproto_v1_0.OFPT_SET_CONFIG)
@@ -1899,8 +1862,7 @@ class OFPPortMod(MsgBase):
 @_set_msg_reply(OFPBarrierReply)
 @_set_msg_type(ofproto_v1_0.OFPT_BARRIER_REQUEST)
 class OFPBarrierRequest(MsgBase):
-    def __init__(self, datapath):
-        super(OFPBarrierRequest, self).__init__(datapath)
+    pass
 
 
 @_set_msg_reply(OFPQueueGetConfigReply)
@@ -1937,8 +1899,7 @@ class OFPStatsRequest(MsgBase):
 @_set_stats_type(ofproto_v1_0.OFPST_DESC, OFPDescStats)
 @_set_msg_type(ofproto_v1_0.OFPT_STATS_REQUEST)
 class OFPDescStatsRequest(OFPStatsRequest):
-    def __init__(self, datapath, flags):
-        super(OFPDescStatsRequest, self).__init__(datapath, flags)
+    pass
 
 
 class OFPFlowStatsRequestBase(OFPStatsRequest):
@@ -1961,26 +1922,21 @@ class OFPFlowStatsRequestBase(OFPStatsRequest):
 @_set_stats_type(ofproto_v1_0.OFPST_FLOW, OFPFlowStats)
 @_set_msg_type(ofproto_v1_0.OFPT_STATS_REQUEST)
 class OFPFlowStatsRequest(OFPFlowStatsRequestBase):
-    def __init__(self, datapath, flags, match, table_id, out_port):
-        super(OFPFlowStatsRequest, self).__init__(
-            datapath, flags, match, table_id, out_port)
+    pass
 
 
 @_set_msg_reply(OFPAggregateStatsReply)
 @_set_stats_type(ofproto_v1_0.OFPST_AGGREGATE, OFPAggregateStats)
 @_set_msg_type(ofproto_v1_0.OFPT_STATS_REQUEST)
 class OFPAggregateStatsRequest(OFPFlowStatsRequestBase):
-    def __init__(self, datapath, flags, match, table_id, out_port):
-        super(OFPAggregateStatsRequest, self).__init__(
-            datapath, flags, match, table_id, out_port)
+    pass
 
 
 @_set_msg_reply(OFPTableStatsReply)
 @_set_stats_type(ofproto_v1_0.OFPST_TABLE, OFPTableStats)
 @_set_msg_type(ofproto_v1_0.OFPT_STATS_REQUEST)
 class OFPTableStatsRequest(OFPStatsRequest):
-    def __init__(self, datapath, flags):
-        super(OFPTableStatsRequest, self).__init__(datapath, flags)
+    pass
 
 
 @_set_msg_reply(OFPPortStatsReply)
