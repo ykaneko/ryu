@@ -103,6 +103,11 @@ class OVSBridge(object):
         command = ovs_vsctl.VSCtlCommand('del-controller', [self.br_name])
         self.run_command([command])
 
+    def set_db_attribute(self, table_name, record, column, value):
+        command = ovs_vsctl.VSCtlCommand(
+            'set', (table_name, record, '%s=%s' % (column, value)))
+        self.run_command([command])
+
     def db_get_val(self, table, record, column):
         command = ovs_vsctl.VSCtlCommand('get', (table, record, column))
         self.run_command([command])
