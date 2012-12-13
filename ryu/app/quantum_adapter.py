@@ -257,7 +257,9 @@ class OVSSwitch(handler_utils.RequestQueue):
                 if port_cfg:
                     if 'ofport' not in port_cfg:
                         port_cfg['ofport'] = port_no
-                    if port_cfg['ofport'] != port_no:
+                    if not port_cfg['ofport']:
+                        port_cfg['ofport'] = port_no
+                    elif port_cfg['ofport'] != port_no:
                         LOG.warn('inconsistent port_no: %d port_cfg %s',
                                  port_no, port_cfg)
                         return
