@@ -194,6 +194,7 @@ class OVSSwitch(handler_utils.RequestQueue):
 
         if not add:
             ports = self.ifaces.get_key(iface_id, QuantumIfaces.KEY_PORTS)
+            other_ovs_ports = None
             for p in ports:
                 dpid = p.get(QuantumIfaces.SUBKEY_DATAPATH_ID)
                 if dpid is None:
@@ -204,9 +205,9 @@ class OVSSwitch(handler_utils.RequestQueue):
                 other_ovs_ports = self.ifaces.del_key(iface_id,
                                                       QuantumIfaces.KEY_PORTS,
                                                       p)
-                if other_ovs_ports:
-                    # When live-migration, one of the two OVS ports is deleted.
-                    return
+            if other_ovs_ports:
+                # When live-migration, one of the two OVS ports is deleted.
+                return
 
             port_data = {
                 'datapath_id': dpid_lib.dpid_to_str(self.dpid),
