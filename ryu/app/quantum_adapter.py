@@ -400,13 +400,15 @@ class QuantumAdapter(app_manager.RyuApp):
                         QuantumAdapterQueue.QUANTUM_ADAPTER_EV_DISPATCHER)
     def port_add_handler(self, ev):
         port = ev.port
-        self._port_handler(ev.dp.id, port.port_no, port.name, True)
+        name = port.name.rstrip('\0')
+        self._port_handler(ev.dp.id, port.port_no, name, True)
 
     @handler.set_ev_cls(dpset.EventPortDelete,
                         QuantumAdapterQueue.QUANTUM_ADAPTER_EV_DISPATCHER)
     def port_del_handler(self, ev):
         port = ev.port
-        self._port_handler(ev.dp.id, port.port_no, port.name, False)
+        name = port.name.rstrip('\0')
+        self._port_handler(ev.dp.id, port.port_no, name, False)
 
     def _conf_switch_set_ovsdb_addr(self, dpid, value):
         ovs_switch = self._get_ovs_switch(dpid)
