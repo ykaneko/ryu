@@ -21,7 +21,6 @@ from ryu.lib import hub
 from ryu.lib.hub import StreamServer
 import traceback
 import random
-import greenlet
 import ssl
 
 import ryu.base.app_manager
@@ -38,6 +37,8 @@ from ryu.ofproto import nx_match
 
 from ryu.controller import handler
 from ryu.controller import ofp_event
+
+from ryu.lib.dpid import dpid_to_str
 
 LOG = logging.getLogger('ryu.controller.controller')
 
@@ -94,11 +95,6 @@ def _deactivate(method):
     def deactivate(self):
         try:
             method(self)
-        except greenlet.GreenletExit:
-            pass
-        except:
-            traceback.print_exc()
-            raise
         finally:
             self.is_active = False
     return deactivate
@@ -319,6 +315,9 @@ def datapath_connection_factory(socket, address):
             # Especially malicious switch can send malformed packet,
             # the parser raise exception.
             # Can we do anything more graceful?
-            LOG.error("Error in the datapath %s from %s",
-                      datapath.id, address)
+            if datapath.id is None:
+                dpid_str = "%s" % datapath.id
+            else:
+                dpid_str = dpid_to_str(datapath.id)
+            LOG.error("Error in the datapath %s from %s", dpid_str, address)
             raise

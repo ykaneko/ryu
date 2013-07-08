@@ -44,13 +44,12 @@ class mpls(packet_base.PacketBase):
     _PACK_STR = '!I'
     _MIN_LEN = struct.calcsize(_PACK_STR)
 
-    def __init__(self, label, exp, bsb, ttl):
+    def __init__(self, label=0, exp=0, bsb=1, ttl=255):
         super(mpls, self).__init__()
         self.label = label
         self.exp = exp
         self.bsb = bsb
         self.ttl = ttl
-        self.length = mpls._MIN_LEN
 
     @classmethod
     def parser(cls, buf):
@@ -61,9 +60,9 @@ class mpls(packet_base.PacketBase):
         label = label >> 12
         msg = cls(label, exp, bsb, ttl)
         if bsb:
-            return msg, ipv4.ipv4
+            return msg, ipv4.ipv4, buf[msg._MIN_LEN:]
         else:
-            return msg, mpls
+            return msg, mpls, buf[msg._MIN_LEN:]
 
     def serialize(self, payload, prev):
         val = self.label << 12 | self.exp << 9 | self.bsb << 8 | self.ttl

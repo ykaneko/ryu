@@ -13,9 +13,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import abc
+
 
 class PacketBase(object):
     """A base class for a protocol (ethernet, ipv4, ...) header."""
+    __metaclass__ = abc.ABCMeta
     _TYPES = {}
 
     @classmethod
@@ -36,10 +39,13 @@ class PacketBase(object):
 
     def __init__(self):
         super(PacketBase, self).__init__()
-        self.length = 0
-        self.protocol_name = self.__class__.__name__
+
+    @property
+    def protocol_name(self):
+        return self.__class__.__name__
 
     @classmethod
+    @abc.abstractmethod
     def parser(cls, buf):
         """Decode a protocol header.
 

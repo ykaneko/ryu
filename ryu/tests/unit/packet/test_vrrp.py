@@ -21,7 +21,7 @@ import logging
 import struct
 import netaddr
 
-from nose.tools import eq_
+from nose.tools import eq_, ok_
 from nose.tools import raises
 
 from ryu.ofproto import inet
@@ -73,7 +73,7 @@ class Test_vrrpv2(unittest.TestCase):
         eq_(self.auth_data, self.vrrpv2.auth_data)
 
     def test_parser(self):
-        vrrpv2, _cls = self.vrrpv2.parser(self.buf)
+        vrrpv2, _cls, _ = self.vrrpv2.parser(self.buf)
 
         eq_(self.version, vrrpv2.version)
         eq_(self.type_, vrrpv2.type)
@@ -137,6 +137,51 @@ class Test_vrrpv2(unittest.TestCase):
         p1.serialize()
         eq_(p0.data, p1.data)
 
+    def _test_is_valid(self, type_=None, vrid=None, priority=None,
+                       max_adver_int=None):
+        if type_ is None:
+            type_ = self.type_
+        if vrid is None:
+            vrid = self.vrid
+        if priority is None:
+            priority = self.priority
+        if max_adver_int is None:
+            max_adver_int = self.max_adver_int
+
+        vrrp_ = vrrp.vrrpv2.create(type_, vrid, priority, max_adver_int,
+                                   [self.ip_address])
+        return vrrp_.is_valid()
+
+    def test_is_valid_ok(self):
+        ok_(self._test_is_valid())
+
+    def test_is_valid_ng_type(self):
+        ok_(not self._test_is_valid(type_=15))
+
+    def test_is_valid_ng_vrid_min(self):
+        vrid = vrrp.VRRP_VRID_MIN - 1
+        ok_(not self._test_is_valid(vrid=vrid))
+
+    def test_is_valid_ng_vrid_max(self):
+        vrid = vrrp.VRRP_VRID_MAX + 1
+        ok_(not self._test_is_valid(vrid=vrid))
+
+    def test_is_valid_ng_priority_min(self):
+        priority = vrrp.VRRP_PRIORITY_MIN - 1
+        ok_(not self._test_is_valid(priority=priority))
+
+    def test_is_valid_ng_priority_max(self):
+        priority = vrrp.VRRP_PRIORITY_MAX + 1
+        ok_(not self._test_is_valid(priority=priority))
+
+    def test_is_valid_ng_adver_min(self):
+        max_adver_int = vrrp.VRRP_V2_MAX_ADVER_INT_MIN - 1
+        ok_(not self._test_is_valid(max_adver_int=max_adver_int))
+
+    def test_is_valid_ng_adver_max(self):
+        max_adver_int = vrrp.VRRP_V2_MAX_ADVER_INT_MAX + 1
+        ok_(not self._test_is_valid(max_adver_int=max_adver_int))
+
 
 class Test_vrrpv3_ipv4(unittest.TestCase):
     """ Test case for vrrp v3 IPv4
@@ -171,7 +216,7 @@ class Test_vrrpv3_ipv4(unittest.TestCase):
         eq_(self.ip_address, self.vrrpv3.ip_addresses[0])
 
     def test_parser(self):
-        vrrpv3, _cls = self.vrrpv3.parser(self.buf)
+        vrrpv3, _cls, _ = self.vrrpv3.parser(self.buf)
 
         eq_(self.version, vrrpv3.version)
         eq_(self.type_, vrrpv3.type)
@@ -233,6 +278,51 @@ class Test_vrrpv3_ipv4(unittest.TestCase):
         p1.serialize()
         eq_(p0.data, p1.data)
 
+    def _test_is_valid(self, type_=None, vrid=None, priority=None,
+                       max_adver_int=None):
+        if type_ is None:
+            type_ = self.type_
+        if vrid is None:
+            vrid = self.vrid
+        if priority is None:
+            priority = self.priority
+        if max_adver_int is None:
+            max_adver_int = self.max_adver_int
+
+        vrrp_ = vrrp.vrrpv3.create(type_, vrid, priority, max_adver_int,
+                                   [self.ip_address])
+        return vrrp_.is_valid()
+
+    def test_is_valid_ok(self):
+        ok_(self._test_is_valid())
+
+    def test_is_valid_ng_type(self):
+        ok_(not self._test_is_valid(type_=15))
+
+    def test_is_valid_ng_vrid_min(self):
+        vrid = vrrp.VRRP_VRID_MIN - 1
+        ok_(not self._test_is_valid(vrid=vrid))
+
+    def test_is_valid_ng_vrid_max(self):
+        vrid = vrrp.VRRP_VRID_MAX + 1
+        ok_(not self._test_is_valid(vrid=vrid))
+
+    def test_is_valid_ng_priority_min(self):
+        priority = vrrp.VRRP_PRIORITY_MIN - 1
+        ok_(not self._test_is_valid(priority=priority))
+
+    def test_is_valid_ng_priority_max(self):
+        priority = vrrp.VRRP_PRIORITY_MAX + 1
+        ok_(not self._test_is_valid(priority=priority))
+
+    def test_is_valid_ng_adver_min(self):
+        max_adver_int = vrrp.VRRP_V3_MAX_ADVER_INT_MIN - 1
+        ok_(not self._test_is_valid(max_adver_int=max_adver_int))
+
+    def test_is_valid_ng_adver_max(self):
+        max_adver_int = vrrp.VRRP_V3_MAX_ADVER_INT_MAX + 1
+        ok_(not self._test_is_valid(max_adver_int=max_adver_int))
+
 
 class Test_vrrpv3_ipv6(unittest.TestCase):
     """ Test case for vrrp v3 IPv6
@@ -267,7 +357,7 @@ class Test_vrrpv3_ipv6(unittest.TestCase):
         eq_(self.ip_address, self.vrrpv3.ip_addresses[0])
 
     def test_parser(self):
-        vrrpv3, _cls = self.vrrpv3.parser(self.buf)
+        vrrpv3, _cls, _ = self.vrrpv3.parser(self.buf)
 
         eq_(self.version, vrrpv3.version)
         eq_(self.type_, vrrpv3.type)

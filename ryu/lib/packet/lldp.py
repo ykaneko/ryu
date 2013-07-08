@@ -111,11 +111,6 @@ class lldp(packet_base.PacketBase):
     def __init__(self, tlvs):
         super(lldp, self).__init__()
         self.tlvs = tlvs
-        length = 0
-        for tlv in tlvs:
-            length += LLDP_TLV_SIZE + tlv.len
-
-        self.length = length
 
     # at least it must have chassis id, port id, ttl and end
     def _tlvs_len_valid(self):
@@ -138,15 +133,16 @@ class lldp(packet_base.PacketBase):
             tlvs.append(tlv)
             offset = LLDP_TLV_SIZE + tlv.len
             buf = buf[offset:]
-            assert (len(buf) > 0 and tlv.tlv_type != LLDP_TLV_END) or \
-                   (len(buf) == 0 and tlv.tlv_type == LLDP_TLV_END)
+            if tlv.tlv_type == LLDP_TLV_END:
+                break
+            assert len(buf) > 0
 
         lldp_pkt = cls(tlvs)
 
         assert lldp_pkt._tlvs_len_valid()
         assert lldp_pkt._tlvs_valid()
 
-        return lldp_pkt, None
+        return lldp_pkt, None, buf
 
     def serialize(self, payload, prev):
         data = bytearray()

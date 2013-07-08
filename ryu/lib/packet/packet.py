@@ -13,6 +13,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import inspect
+import struct
+
 from . import packet_base
 from . import ethernet
 
@@ -31,25 +34,28 @@ class Packet(object):
     *data* should be omitted when encoding a packet.
     """
 
-    def __init__(self, data=None):
+    def __init__(self, data=None, protocols=None, parse_cls=ethernet.ethernet):
         super(Packet, self).__init__()
         self.data = data
-        self.protocols = []
+        if protocols is None:
+            self.protocols = []
+        else:
+            self.protocols = protocols
         self.protocol_idx = 0
-        self.parsed_bytes = 0
         if self.data:
-            # Do we need to handle non ethernet?
-            self._parser(ethernet.ethernet)
+            self._parser(parse_cls)
 
     def _parser(self, cls):
+        rest_data = self.data
         while cls:
-            proto, cls = cls.parser(self.data[self.parsed_bytes:])
+            try:
+                proto, cls, rest_data = cls.parser(rest_data)
+            except struct.error:
+                break
             if proto:
-                self.parsed_bytes += proto.length
                 self.protocols.append(proto)
-
-        if len(self.data) > self.parsed_bytes:
-            self.protocols.append(self.data[self.parsed_bytes:])
+        if rest_data:
+            self.protocols.append(rest_data)
 
     def serialize(self):
         """Encode a packet and store the resulted bytearray in self.data.
@@ -83,6 +89,14 @@ class Packet(object):
 
         self.protocols.append(proto)
 
+    def get_protocols(self, protocol):
+        """Returns a list of protocols that matches to the specified protocol.
+        """
+        if isinstance(protocol, packet_base.PacketBase):
+            protocol = protocol.__class__
+        assert issubclass(protocol, packet_base.PacketBase)
+        return [p for p in self.protocols if isinstance(p, protocol)]
+
     def next(self):
         try:
             p = self.protocols[self.protocol_idx]
@@ -95,3 +109,21 @@ class Packet(object):
 
     def __iter__(self):
         return self
+
+    def __getitem__(self, idx):
+        return self.protocols[idx]
+
+    def __setitem__(self, idx, item):
+        self.protocols[idx] = item
+
+    def __delitem__(self, idx):
+        del self.protocols[idx]
+
+    def __len__(self):
+        return len(self.protocols)
+
+    def __contains__(self, protocol):
+        if (inspect.isclass(protocol) and
+                issubclass(protocol, packet_base.PacketBase)):
+            return protocol in [p.__class__ for p in self.protocols]
+        return protocol in self.protocols

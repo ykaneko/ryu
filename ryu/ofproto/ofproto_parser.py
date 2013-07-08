@@ -16,6 +16,8 @@
 
 import logging
 import struct
+import functools
+import inspect
 
 from ryu import exception
 
@@ -50,8 +52,31 @@ def msg(datapath, version, msg_type, msg_len, xid, buf):
     return msg_parser(datapath, version, msg_type, msg_len, xid, buf)
 
 
-class MsgBase(object):
+def create_list_of_base_attributes(f):
+    @functools.wraps(f)
+    def wrapper(self, *args, **kwargs):
+        ret = f(self, *args, **kwargs)
+        self._base_attributes = set(dir(self))
+        return ret
+    return wrapper
+
+
+class StringifyMixin(object):
+    def __str__(self):
+        buf = ''
+        sep = ''
+        for k, v in ofp_attrs(self):
+            buf += sep
+            buf += "%s=%s" % (k, repr(v))  # repr() to escape binaries
+            sep = ','
+        return self.__class__.__name__ + '(' + buf + ')'
+    __repr__ = __str__  # note: str(list) uses __repr__ for elements
+
+
+class MsgBase(StringifyMixin):
+    @create_list_of_base_attributes
     def __init__(self, datapath):
+        super(MsgBase, self).__init__()
         self.datapath = datapath
         self.version = None
         self.msg_type = None
@@ -75,16 +100,17 @@ class MsgBase(object):
         self.buf = buffer(buf)
 
     def __str__(self):
-        return 'version: 0x%x msg_type 0x%x xid 0x%x' % (self.version,
+        buf = 'version: 0x%x msg_type 0x%x xid 0x%x ' % (self.version,
                                                          self.msg_type,
                                                          self.xid)
+        return buf + StringifyMixin.__str__(self)
 
     @classmethod
     def parser(cls, datapath, version, msg_type, msg_len, xid, buf):
-        msg = cls(datapath)
-        msg.set_headers(version, msg_type, msg_len, xid)
-        msg.set_buf(buf)
-        return msg
+        msg_ = cls(datapath)
+        msg_.set_headers(version, msg_type, msg_len, xid)
+        msg_.set_buf(buf)
+        return msg_
 
     def _serialize_pre(self):
         assert self.version is None
@@ -135,9 +161,25 @@ def msg_pack_into(fmt, buf, offset, *args):
     struct.pack_into(fmt, buf, offset, *args)
 
 
-def msg_str_attr(msg, buf, attr_list):
+def ofp_attrs(msg_):
+    base = getattr(msg_, '_base_attributes', [])
+    for k, v in inspect.getmembers(msg_):
+        if k.startswith('_'):
+            continue
+        if callable(v):
+            continue
+        if k in base:
+            continue
+        if hasattr(msg_.__class__, k):
+            continue
+        yield (k, v)
+
+
+def msg_str_attr(msg_, buf, attr_list=None):
+    if attr_list is None:
+        attr_list = ofp_attrs(msg_)
     for attr in attr_list:
-        val = getattr(msg, attr, None)
+        val = getattr(msg_, attr, None)
         if val is not None:
             buf += ' %s %s' % (attr, val)
 

@@ -134,6 +134,8 @@ class OVSSwitch(object):
         self.logger = logger
         self.q_api = q_api
         self.ctrl_addr = CONF.quantum_controller_addr
+        if not self.ctrl_addr:
+            raise ValueError('option quantum_controler_addr must be speicfied')
 
         self.ovsdb_addr = None
         self.tunnel_ip = None
@@ -209,14 +211,7 @@ class OVSSwitch(object):
                 return
 
             port_data = {
-                'datapath_id': dpid_lib.dpid_to_str(self.dpid),
-                'port_no': port.ofport,
-
-                # In order to set
-                # port.status = quantum.common.constants.PORT_STATUS_DOWN
-                # port.status can't be changed via rest api directly,
-                # so resort to ryu-specical parameter to tell it.
-                'deleted': True
+                'status': 'DOWN'
             }
             body = {'port': port_data}
             # self.logger.debug("port-body = %s", body)

@@ -43,13 +43,12 @@ class vlan(packet_base.PacketBase):
     _PACK_STR = "!HH"
     _MIN_LEN = struct.calcsize(_PACK_STR)
 
-    def __init__(self, pcp, cfi, vid, ethertype):
+    def __init__(self, pcp=0, cfi=0, vid=0, ethertype=ether.ETH_TYPE_IP):
         super(vlan, self).__init__()
         self.pcp = pcp
         self.cfi = cfi
         self.vid = vid
         self.ethertype = ethertype
-        self.length = vlan._MIN_LEN
 
     @classmethod
     def parser(cls, buf):
@@ -57,7 +56,8 @@ class vlan(packet_base.PacketBase):
         pcp = tci >> 13
         cfi = (tci >> 12) & 1
         vid = tci & ((1 << 12) - 1)
-        return cls(pcp, cfi, vid, ethertype), vlan.get_packet_type(ethertype)
+        return (cls(pcp, cfi, vid, ethertype),
+                vlan.get_packet_type(ethertype), buf[vlan._MIN_LEN:])
 
     def serialize(self, payload, prev):
         tci = self.pcp << 13 | self.cfi << 12 | self.vid
